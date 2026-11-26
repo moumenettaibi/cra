@@ -7,6 +7,18 @@ public struct LiveFolderPluginPresentation: Codable, Equatable {
         public var enabledByDefault: Bool
     }
 
+    public struct OptionGroup: Codable, Equatable {
+        public struct Choice: Codable, Equatable {
+            public var id: String
+            public var title: String
+            public var enabledByDefault: Bool?
+        }
+
+        public var id: String
+        public var title: String
+        public var choices: [Choice]
+    }
+
     public struct Groups: Codable, Equatable {
         public var title: String
         public var description: String
@@ -20,12 +32,16 @@ public struct LiveFolderPluginPresentation: Codable, Equatable {
         public var defaultValue: String
         public var invalidTitle: String
         public var invalidMessage: String
+        public var allowQuery: Bool?
     }
 
     public var folderTitle: String
     public var menuTitle: String
     public var icon: String
     public var filters: [Filter]
+    public var optionGroups: [OptionGroup]?
+    public var defaultRefreshInterval: TimeInterval?
+    public var refreshIntervals: [TimeInterval]?
     public var groups: Groups?
     public var setup: Setup?
     public var statusMessages: [String: String]
@@ -35,6 +51,24 @@ public struct LiveFolderPluginPresentation: Codable, Equatable {
               Set(filters.map(\.id)).count == filters.count,
               filters.allSatisfy({ !$0.id.isEmpty && !$0.title.isEmpty }) else {
             throw LiveFolderPluginError.invalidManifest("Invalid folder presentation")
+        }
+        if let optionGroups {
+            guard Set(optionGroups.map(\.id)).count == optionGroups.count else {
+                throw LiveFolderPluginError.invalidManifest("Duplicate option group ID")
+            }
+            for group in optionGroups {
+                guard !group.id.isEmpty, !group.title.isEmpty, !group.choices.isEmpty,
+                      Set(group.choices.map(\.id)).count == group.choices.count,
+                      group.choices.allSatisfy({ !$0.id.isEmpty && !$0.title.isEmpty }) else {
+                    throw LiveFolderPluginError.invalidManifest("Invalid option group")
+                }
+            }
+        }
+        if let defaultRefreshInterval, (!defaultRefreshInterval.isFinite || defaultRefreshInterval <= 0) {
+            throw LiveFolderPluginError.invalidManifest("Invalid default refresh interval")
+        }
+        if let refreshIntervals, refreshIntervals.contains(where: { !$0.isFinite || $0 <= 0 }) {
+            throw LiveFolderPluginError.invalidManifest("Invalid refresh interval")
         }
     }
 }
@@ -150,11 +184,18 @@ public struct LiveFolderPluginSnapshot: Codable, Equatable {
     public var actionMessage: String?
     public var warning: String?
     public var preservedGroups: [String]
+    public var state: [String: String]?
+    public var notModified: Bool?
+    public var folderTitle: String?
 
-    public init(items: [LiveFolderPluginItem], actions: [Action] = [], preservedGroups: [String] = []) {
+    public init(items: [LiveFolderPluginItem], actions: [Action] = [], preservedGroups: [String] = [],
+                state: [String: String]? = nil, notModified: Bool? = nil, folderTitle: String? = nil) {
         self.items = items
         self.actions = actions
         self.preservedGroups = preservedGroups
+        self.state = state
+        self.notModified = notModified
+        self.folderTitle = folderTitle
     }
 
     public func validate() throws {

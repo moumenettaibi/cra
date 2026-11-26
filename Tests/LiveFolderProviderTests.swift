@@ -19,7 +19,9 @@ enum LiveFolderProviderTests {
         try gitLab(gitlab, executable: executable)
         let azure = try LiveFolderPluginPackage(directory: URL(fileURLWithPath: "resources/live-folder-plugins/azure-devops"))
         try azureDevOps(azure, executable: executable)
-        print("Bundled providers: GitHub, GitLab and Azure DevOps cases passed")
+        let rss = try LiveFolderPluginPackage(directory: URL(fileURLWithPath: "resources/live-folder-plugins/rss"))
+        try rssFeed(rss, executable: executable)
+        print("Bundled providers: GitHub, GitLab, Azure DevOps and RSS cases passed")
     }
 
     // MARK: Helpers
@@ -661,5 +663,125 @@ enum LiveFolderProviderTests {
                                           origins: [], executable: executable))
             check((changed["refreshAfter"] as? [Int] ?? []).isEmpty != refreshes && (changed["checkSignIn"] as? Bool) == refreshes, "page \(url)")
         }
+    }
+
+    // MARK: RSS / Atom
+
+    private static func rssFeed(_ rss: LiveFolderPluginPackage, executable: URL) throws {
+        let origins = ["https://example.test"]
+        let presentation = try JSONDecoder().decode(LiveFolderPluginPresentation.self,
+            from: invoke(rss, "describe", input: [:], origins: [], executable: executable))
+        try presentation.validate()
+        check(presentation.setup?.key == rss.manifest.sessionSetting && presentation.setup?.allowQuery == true,
+              "RSS setup allows feed URLs with query strings")
+        check(presentation.defaultRefreshInterval == 900 && presentation.refreshIntervals?.contains(3600) == true,
+              "RSS defaults to 15 minutes and exposes fetch intervals")
+        check(presentation.optionGroups?.map(\.id) == ["limit", "range"],
+              "RSS exposes Item Limit and Time Range option groups")
+
+        // Auto-discovery from a standard site URL, RSS 2.0 parsing, and caching ETag / Last-Modified.
+        let siteHTML = #"<html><head><link rel="alternate" type="application/rss+xml" title="Blog" href="/feed.xml"></head></html>"#
+        let rssXML = #"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+          <channel>
+            <title>Example Blog</title>
+            <item>
+              <title>First &amp; Oldest</title>
+              <link>https://example.test/posts/1</link>
+              <dc:creator>Alice</dc:creator>
+              <pubDate>Tue, 03 Nov 2026 10:00:00 GMT</pubDate>
+            </item>
+            <item>
+              <title><![CDATA[Second <b>Newest</b>]]></title>
+              <link>/posts/2</link>
+              <author>Bob</author>
+              <pubDate>Fri, 06 Nov 2026 12:00:00 GMT</pubDate>
+            </item>
+          </channel>
+        </rss>
+        """#
+        var requestedURLs: [String] = []
+        let discovered = try refresh(rss, executable: executable, origins: origins, filters: [],
+                                     settings: ["feed": "https://example.test"]) { request in
+            requestedURLs.append(request.url)
+            if request.url == "https://example.test" {
+                return LiveFolderPluginResponse(status: 200, url: "https://example.test/", body: siteHTML)
+            }
+            return LiveFolderPluginResponse(status: 200, url: request.url, body: rssXML,
+                                            headers: ["ETag": "\"feed-v1\"", "Last-Modified": "Fri, 06 Nov 2026 12:00:00 GMT"])
+        }.get()
+        check(requestedURLs == ["https://example.test", "https://example.test/feed.xml"], "discovers feed from HTML link")
+        check(discovered.folderTitle == "Example Blog", "uses discovered feed title")
+        check(discovered.items.map(\.title) == ["Second Newest", "First & Oldest"], "parses RSS newest first")
+        check(discovered.items.map(\.url) == ["https://example.test/posts/2", "https://example.test/posts/1"], "resolves relative item URLs")
+        check(discovered.state?["feedURL"] == "https://example.test/feed.xml" && discovered.state?["etag"] == "\"feed-v1\"",
+              "saves discovered feed URL and ETag")
+
+        // Subsequent poll sends If-None-Match / If-Modified-Since and handles 304 Not Modified.
+        var conditionalHeaders: [String: String]?
+        let stateInput = discovered.state ?? [:]
+        let cachedData = try invoke(rss, "refresh", input: [
+            "settings": ["feed": "https://example.test"],
+            "filters": [],
+            "state": stateInput,
+            "groups": []
+        ], origins: origins, executable: executable) { request in
+            conditionalHeaders = request.headers
+            check(request.url == "https://example.test/feed.xml", "subsequent polls fetch discovered feed URL directly")
+            return LiveFolderPluginResponse(status: 304, url: request.url, body: "", headers: ["ETag": "\"feed-v1\""])
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let notModifiedSnapshot = try decoder.decode(LiveFolderPluginSnapshot.self, from: cachedData)
+        check(conditionalHeaders?["If-None-Match"] == "\"feed-v1\"" && conditionalHeaders?["If-Modified-Since"] == "Fri, 06 Nov 2026 12:00:00 GMT",
+              "sends conditional cache headers")
+        check(notModifiedSnapshot.notModified == true && notModifiedSnapshot.items.isEmpty, "handles 304 Not Modified")
+
+        // Item Limit and Time Range filtering.
+        let now24h = 1_793_995_200.0 // 2026-11-06T20:00:00Z
+        let limitedData = try invoke(rss, "refresh", input: [
+            "settings": ["feed": "https://example.test/feed.xml", "limit": "5", "range": "24h"],
+            "filters": [],
+            "state": [:],
+            "groups": [],
+            "now": now24h
+        ], origins: origins, executable: executable) { request in
+            LiveFolderPluginResponse(status: 200, url: request.url, body: rssXML)
+        }
+        let limited = try decoder.decode(LiveFolderPluginSnapshot.self, from: limitedData)
+        check(limited.items.map(\.title) == ["Second Newest"], "Time Range 24h filters out older posts")
+
+        // Atom feed support.
+        let atomXML = #"""
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <title>Atom Feed</title>
+          <entry>
+            <title>Atom Entry</title>
+            <link rel="alternate" href="/atom/1"/>
+            <id>atom-1</id>
+            <published>2026-11-06T09:00:00Z</published>
+            <author><name>Carol</name></author>
+          </entry>
+        </feed>
+        """#
+        let atom = try refresh(rss, executable: executable, origins: origins, filters: [],
+                               settings: ["feed": "https://example.test/atom.xml"]) { request in
+            LiveFolderPluginResponse(status: 200, url: request.url, body: atomXML)
+        }.get()
+        check(atom.folderTitle == "Atom Feed" && atom.items.map(\.url) == ["https://example.test/atom/1"] && atom.items.first?.subtitle == "Carol",
+              "parses Atom entries")
+
+        // Errors map cleanly.
+        for (status, expected) in [(0, "network"), (401, "notSignedIn"), (403, "notSignedIn"), (429, "rateLimited"), (404, "unexpectedPage")] {
+            check(code(try refresh(rss, executable: executable, origins: origins, filters: [],
+                                   settings: ["feed": "https://example.test/feed.xml"]) {
+                LiveFolderPluginResponse(status: status, url: $0.url, body: "")
+            }) == expected, "RSS status \(status)")
+        }
+        check(code(try refresh(rss, executable: executable, origins: origins, filters: [],
+                               settings: ["feed": "https://example.test"]) {
+            LiveFolderPluginResponse(status: 200, url: $0.url, body: "<html><body>No feed link here</body></html>")
+        }) == "unexpectedPage", "HTML without feed link fails cleanly")
     }
 }

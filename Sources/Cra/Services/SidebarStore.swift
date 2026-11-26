@@ -2139,9 +2139,13 @@ final class SidebarStore {
     func updateLiveFolder(_ id: UUID, _ change: (inout LiveFolderData) -> Void) {
         guard var live = items[id]?.liveFolder else { return }
         let previousFilters = live.plugin?.filters
+        let previousSettings = live.plugin?.settings
         change(&live)
         if live.plugin?.snapshotFilters == nil, live.plugin?.filters != previousFilters {
             live.plugin?.snapshotFilters = previousFilters
+        }
+        if live.plugin?.snapshotSettings == nil, live.plugin?.settings != previousSettings {
+            live.plugin?.snapshotSettings = previousSettings
         }
         items[id]?.liveFolder = live
         touch()
@@ -2184,9 +2188,23 @@ final class SidebarStore {
     func applyPluginResults(_ snapshot: LiveFolderPluginSnapshot, to folderID: UUID, context: LiveRequestContext? = nil) {
         if let context, liveRequestContext(folderID) != context { return }
         guard var folder = items[folderID], var live = folder.liveFolder else { return }
+        if snapshot.notModified == true {
+            live.lastFetch = clock.now
+            live.lastError = nil
+            if let state = snapshot.state { live.plugin?.state = state }
+            let currentFilters = live.plugin?.filters
+            let currentSettings = live.plugin?.settings
+            live.plugin?.snapshotFilters = currentFilters
+            live.plugin?.snapshotSettings = currentSettings
+            folder.liveFolder = live
+            items[folderID] = folder
+            touch()
+            return
+        }
         let hidden = Set(live.hiddenItems)
         let filtersChanged = live.plugin.map { config in
-            config.snapshotFilters.map { Set($0) != Set(config.filters) } ?? false
+            (config.snapshotFilters.map { Set($0) != Set(config.filters) } ?? false)
+                || (config.snapshotSettings.map { $0 != config.settings } ?? false)
         } ?? false
         let wanted = snapshot.items.filter { !hidden.contains($0.url) && !live.filter.isRepositoryHidden($0.group ?? "") }
         let groups = Dictionary(uniqueKeysWithValues: (live.plugin?.snapshot?.items ?? []).map { ($0.url, $0.group ?? "") })
@@ -2255,8 +2273,11 @@ final class SidebarStore {
         let retained = Set(folder.children.compactMap { items[$0]?.tab?.liveItemURL })
         cached.items += (live.plugin?.snapshot?.items ?? []).filter { !incoming.contains($0.url) && retained.contains($0.url) }
         live.plugin?.snapshot = cached
+        if let state = snapshot.state { live.plugin?.state = state }
         let currentFilters = live.plugin?.filters
+        let currentSettings = live.plugin?.settings
         live.plugin?.snapshotFilters = currentFilters
+        live.plugin?.snapshotSettings = currentSettings
         folder.liveFolder = live
         items[folderID] = folder
         touch()

@@ -44,7 +44,46 @@ struct LiveFolderPluginTests {
         let restored = try JSONDecoder().decode(LiveFolderData.self, from: JSONEncoder().encode(folder))
         #expect(restored == folder)
         #expect(LiveFolderPluginConfiguration.normalizedAddress(" HTTPS://Example.test:443/app/ ") == "https://example.test/app")
+        #expect(LiveFolderPluginConfiguration.normalizedAddress("https://example.test/feed?format=rss") == nil)
+        #expect(LiveFolderPluginConfiguration.normalizedAddress("https://example.test/feed?format=rss", allowQuery: true) == "https://example.test/feed?format=rss")
         #expect(LiveFolderPluginConfiguration.normalizedAddress("https://user:secret@example.test") == nil)
+
+        var snapshot = LiveFolderPluginSnapshot(items: [], state: ["etag": "\"v1\""], notModified: true, folderTitle: "Example Feed")
+        snapshot.warning = nil
+        let restoredSnapshot = try JSONDecoder().decode(LiveFolderPluginSnapshot.self, from: JSONEncoder().encode(snapshot))
+        #expect(restoredSnapshot == snapshot)
+        let response = LiveFolderPluginResponse(status: 304, url: "https://example.test/feed.xml", body: "", headers: ["ETag": "\"v1\""])
+        let restoredResponse = try JSONDecoder().decode(LiveFolderPluginResponse.self, from: JSONEncoder().encode(response))
+        #expect(restoredResponse.status == 304 && restoredResponse.headers?["ETag"] == "\"v1\"")
+
+        let presentationJSON = """
+        {
+          "folderTitle": "RSS Feed",
+          "menuTitle": "RSS Feed",
+          "icon": "icon.svg",
+          "filters": [],
+          "optionGroups": [
+            {
+              "id": "limit",
+              "title": "Item Limit",
+              "choices": [
+                {"id": "5", "title": "5 items"},
+                {"id": "25", "title": "25 items", "enabledByDefault": true}
+              ]
+            }
+          ],
+          "defaultRefreshInterval": 900,
+          "refreshIntervals": [300, 900],
+          "statusMessages": {}
+        }
+        """
+        let presentation = try JSONDecoder().decode(LiveFolderPluginPresentation.self, from: Data(presentationJSON.utf8))
+        try presentation.validate()
+        let config = LiveFolderPluginConfiguration(id: "cra.rss", settings: [:], filters: [], sessionOrigins: [])
+        #expect(config.selectedOption(for: presentation.optionGroups![0]) == "25")
+        var customized = config
+        customized.settings["limit"] = "5"
+        #expect(customized.selectedOption(for: presentation.optionGroups![0]) == "5")
     }
 
     @Test func sessionRequestsStayOnTheGrantedOrigin() throws {

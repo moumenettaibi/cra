@@ -1,8 +1,8 @@
 # Live folder plugins
 
-Live folders use JavaScript providers and native sidebar rows. GitHub, GitLab, Jira and Azure DevOps ship in
-`resources/live-folder-plugins`; they use the same execution and presentation API as installed
-packages. Service-specific requests, parsing, filters, icons, labels and navigation triggers belong
+Live folders use JavaScript providers and native sidebar rows. GitHub, GitLab, Jira, Azure DevOps and
+RSS Feed ship in `resources/live-folder-plugins`; they use the same execution and presentation API as
+installed packages. Service-specific requests, parsing, filters, icons, labels and navigation triggers belong
 to the package. Cra owns tabs, persistence, scheduling, profile selection and permission checks.
 
 ## Installing a package
@@ -53,6 +53,21 @@ your vote is still "No vote", so a pull request leaves once you approve, wait fo
 Arc's GitHub review requests do. Reviews requested from a team you're in aren't listed: the API matches reviewers
 by id only. Rows show the title and the author; **Repositories** groups them by `project/repository`, or by the
 repository alone when it has the project's name. Opening a page in the organization refreshes the folder 2 s later.
+
+## RSS Feed
+
+Add **Live Folders → RSS Feed…** (or **New RSS Live Folder** in the command bar) and enter either a
+direct feed address (including query-string feeds such as `https://example.com/?feed=rss2`) or a normal
+website URL whose HTML advertises `<link rel="alternate" type="application/rss+xml">` or
+`application/atom+xml` on the same origin. Cra parses RSS 2.0, RSS 1.0/RDF and Atom feeds, decodes CDATA
+and HTML entities, resolves relative item URLs, and renames newly created folders to the feed’s `<title>`.
+
+New RSS folders default to a 15-minute **Fetch Interval** (`5 minutes` to `8 hours` in the folder menu),
+**Item Limit** (`5`, `10`, `25` or `50 items`), and **Time Range** (`Last 24 hours`, `Last 7 days`,
+`Last 30 days` or `All time`). Lowering **Item Limit** or narrowing **Time Range** trims excluded items
+immediately without waiting for the 120 s retention window. When response headers include `ETag` or
+`Last-Modified`, the plugin sends `If-None-Match` / `If-Modified-Since` on subsequent polls and handles
+`304 Not Modified` without disturbing existing tabs.
 
 ## Saved folders
 
@@ -111,14 +126,19 @@ session origins; other addresses never start the helper. `checkSignIn` refreshes
 for a sign-in 2 s after such pages stop loading (at most once per 10 s).
 
 `describe()` returns `folderTitle`, `menuTitle`, `icon`, `filters` and `statusMessages`. Each filter
-has `id`, `title` and `enabledByDefault`. Optional `groups: {title, description}` controls the group
-exclusion submenu. Optional `setup` has `key`, `title`, `message`, `placeholder`, `defaultValue`,
-`invalidTitle` and `invalidMessage`; the native address dialog retains Cra’s normal layout.
+has `id`, `title` and `enabledByDefault`. Optional `optionGroups` defines exclusive radio-style submenus
+(`id`, `title`, and `choices` of `{id, title, enabledByDefault}`) stored in `settings[group.id]`.
+Optional `defaultRefreshInterval` and `refreshIntervals` (seconds) configure a per-folder **Fetch Interval**
+submenu. Optional `groups: {title, description}` controls the group exclusion submenu. Optional `setup` has
+`key`, `title`, `message`, `placeholder`, `defaultValue`, `invalidTitle`, `invalidMessage` and optional
+`allowQuery`; the native address dialog retains Cra’s normal layout.
 
 `signIn()` returns `title`, `url` and `warning`. Optional `emptyText`, `failureText`, `failureURL`,
 `instanceLabel` and `detailLabel` supply the folder’s empty/error rows and instance menu labels.
 
-A snapshot contains `items`, `actions` and `preservedGroups`. Each item has a unique `id` and `url`,
+A snapshot contains `items`, `actions` and `preservedGroups`, plus optional `state` (persisted on
+success), `notModified` (`true` for HTTP 304 so existing tabs stay untouched) and `folderTitle` (used when
+the folder still has its default title). Each item has a unique `id` and `url`,
 `title`, optional `subtitle`, `group`, `createdAt` and `updatedAt` (Unix seconds), `revision`
 (the head commit), and `details: {draft?, commentCount?, labels?: [{name, color?}], tasks?: {done, total}}`.
 The new fields decode independently and fail soft: wrong types are omitted, negative counts and
@@ -146,7 +166,7 @@ if (response.status === 401) throw new Error("notSignedIn");
 const items = JSON.parse(response.body);
 ```
 
-The result is `{status, url, body}`. Requests are GET-only and run through Chromium with the folder’s
+The result is `{status, url, body, headers?}`. Requests are GET-only and run through Chromium with the folder’s
 space profile. Plugins cannot select another profile or read cookies. Cookie, authorization, host,
 origin and referer request headers cannot be supplied by plugins. Redirects stop in Chromium and
 are checked before the next request; a redirect outside the grant is treated as requiring sign-in.

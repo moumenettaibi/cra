@@ -1939,7 +1939,11 @@ enum StoreTests {
         }
         let one = LiveFolderPluginItem(id: "one", url: "https://example.test/one", title: "One", subtitle: "alice", group: "team/app")
         let two = LiveFolderPluginItem(id: "two", url: "https://example.test/two", title: "Two", group: "protected/app")
-        store.applyPluginResults(.init(items: [one, two]), to: folder.id)
+        store.applyPluginResults(.init(items: [one, two], state: ["etag": "\"v1\""]), to: folder.id)
+        expect(store.item(folder.id)?.liveFolder?.plugin?.state["etag"] == "\"v1\"", "successful plugin results persist updated state")
+        store.applyPluginResults(.init(items: [], state: ["etag": "\"v2\""], notModified: true), to: folder.id)
+        expect(store.children(of: folder.id).count == 2 && store.item(folder.id)?.liveFolder?.plugin?.state["etag"] == "\"v2\"",
+               "304 notModified keeps existing tabs and updates state")
         expect(store.children(of: folder.id).count == 2, "plugin results create native tabs")
         expect(store.children(of: folder.id).first?.tab?.liveSubtitle == "alice", "plugin subtitles reach the row model")
         guard let tab = store.children(of: folder.id).first(where: { $0.tab?.liveItemURL == one.url }) else {

@@ -1,4 +1,5 @@
 import CraCore
+import Foundation
 import Testing
 
 struct LiveFolderModelTests {
@@ -109,5 +110,26 @@ struct LiveFolderModelTests {
         #expect(!LiveItemPage.shows("https://git.example.test/gitlab/team/app/-/merge_requests/72", item: mr), "another port")
         #expect(LiveItemPage.shows("https://jira.example.test/browse/CRA-1?focusedCommentId=3", item: "https://jira.example.test/browse/CRA-1"))
         #expect(!LiveItemPage.shows("https://jira.example.test/browse/CRA-12", item: "https://jira.example.test/browse/CRA-1"))
+    }
+
+    @Test func perFolderRefreshIntervalSchedulesDueRefreshesAndFormatsLabels() throws {
+        #expect(LiveFolderRefreshInterval.title(for: 300) == "5 minutes")
+        #expect(LiveFolderRefreshInterval.title(for: 900) == "15 minutes")
+        #expect(LiveFolderRefreshInterval.title(for: 3600) == "1 hour")
+        #expect(LiveFolderRefreshInterval.title(for: 14400) == "4 hours")
+
+        var folder = LiveFolderData()
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        folder.lastFetch = t0
+        folder.refreshInterval = 900
+        #expect(folder.effectiveRefreshInterval(default: 120) == 900)
+        #expect(!folder.isRefreshDue(now: t0.addingTimeInterval(600), defaultInterval: 120, retryInterval: 30))
+        #expect(folder.isRefreshDue(now: t0.addingTimeInterval(900), defaultInterval: 120, retryInterval: 30))
+
+        folder.lastError = .network
+        #expect(folder.isRefreshDue(now: t0.addingTimeInterval(30), defaultInterval: 120, retryInterval: 30))
+
+        let decoded = try JSONDecoder().decode(LiveFolderData.self, from: JSONEncoder().encode(folder))
+        #expect(decoded.refreshInterval == 900)
     }
 }

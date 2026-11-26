@@ -10,11 +10,13 @@ public struct LiveFolderPluginResponse: Codable, Sendable {
     public var status: Int
     public var url: String
     public var body: String
+    public var headers: [String: String]?
 
-    public init(status: Int, url: String, body: String) {
+    public init(status: Int, url: String, body: String, headers: [String: String]? = nil) {
         self.status = status
         self.url = url
         self.body = body
+        self.headers = headers
     }
 }
 

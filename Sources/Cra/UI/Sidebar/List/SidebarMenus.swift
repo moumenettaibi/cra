@@ -323,16 +323,42 @@ enum SidebarMenus {
         let requests = submenu(menu, entry?.presentation.menuTitle ?? item.title ?? "Live Folder", image: entry?.icon)
         note(requests, manager.refreshing.contains(id) ? "Updating…" : LiveFolderText.lastUpdate(live))
         if let detail = live.plugin?.detailLabel { note(requests, detail) }
-        add(requests, "Refresh") { manager.refresh(id) }
-        requests.addItem(.separator())
-        for filter in entry?.presentation.filters ?? [] {
-            let on = live.plugin?.filters.contains(filter.id) == true
-            add(requests, filter.title, on: on) {
-                store.updateLiveFolder(id) { live in
-                    if on { live.plugin?.filters.removeAll { $0 == filter.id } }
-                    else { live.plugin?.filters.append(filter.id) }
+        if let intervals = entry?.presentation.refreshIntervals, !intervals.isEmpty {
+            let sub = submenu(requests, "Fetch Interval")
+            let defaultInterval = entry?.presentation.defaultRefreshInterval ?? LiveFolderManager.refreshInterval
+            let current = live.effectiveRefreshInterval(default: defaultInterval)
+            for seconds in intervals {
+                add(sub, LiveFolderRefreshInterval.title(for: seconds), on: abs(current - seconds) < 1) {
+                    store.updateLiveFolder(id) { $0.refreshInterval = seconds }
+                    manager.refreshStale()
                 }
-                manager.refresh(id, force: true)
+            }
+        }
+        add(requests, "Refresh") { manager.refresh(id) }
+        if !(entry?.presentation.filters ?? []).isEmpty {
+            requests.addItem(.separator())
+            for filter in entry?.presentation.filters ?? [] {
+                let on = live.plugin?.filters.contains(filter.id) == true
+                add(requests, filter.title, on: on) {
+                    store.updateLiveFolder(id) { live in
+                        if on { live.plugin?.filters.removeAll { $0 == filter.id } }
+                        else { live.plugin?.filters.append(filter.id) }
+                    }
+                    manager.refresh(id, force: true)
+                }
+            }
+        }
+        if let groups = entry?.presentation.optionGroups, !groups.isEmpty {
+            requests.addItem(.separator())
+            for group in groups {
+                let selected = live.plugin?.selectedOption(for: group)
+                let sub = submenu(requests, group.title)
+                for choice in group.choices {
+                    add(sub, choice.title, on: selected == choice.id) {
+                        store.updateLiveFolder(id) { $0.plugin?.settings[group.id] = choice.id }
+                        manager.refresh(id, force: true)
+                    }
+                }
             }
         }
         let repos = store.liveRepositories(id, fetched: manager.repositories[id])
@@ -428,6 +454,9 @@ enum SidebarMenus {
                     try await LiveFolderManager.shared.updateSignIn(&configuration, entry: entry)
                     guard let folder = store.createPluginFolder(configuration, title: entry.presentation.folderTitle, inSpace: space,
                         legacySource: entry.package.manifest.legacySource) else { return }
+                    if let interval = entry.presentation.defaultRefreshInterval {
+                        store.updateLiveFolder(folder.id) { $0.refreshInterval = interval }
+                    }
                     store.setExpanded(folder.id, true)
                     LiveFolderManager.shared.refresh(folder.id, force: true)
                 } catch { AppDialog(title: "Could not add live folder", message: error.localizedDescription).runModal(over: window) }
@@ -441,7 +470,8 @@ enum SidebarMenus {
         dialog.present(over: window) { response in
             guard response == .alertFirstButtonReturn else { return }
             let input = (dialog.input ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let address = LiveFolderPluginConfiguration.normalizedAddress(input.isEmpty ? setup.defaultValue : input) else {
+            guard let address = LiveFolderPluginConfiguration.normalizedAddress(input.isEmpty ? setup.defaultValue : input,
+                                                                                   allowQuery: setup.allowQuery == true) else {
                 DispatchQueue.main.async { AppDialog(title: setup.invalidTitle, message: setup.invalidMessage).runModal(over: window) }
                 return
             }

@@ -86,6 +86,8 @@ public struct LiveFolderData: Codable, Equatable {
     /// Items closed out of the folder; they don't come back (Arc: hiddenItems).
     public var hiddenItems: [String] = []
     public var lastFetch: Date?
+    /// Per-folder refresh interval override in seconds; nil uses the app/plugin default.
+    public var refreshInterval: TimeInterval?
     /// Why the last refresh failed; nil once one succeeds.
     public var lastError: LiveFolderError?
     /// Organizations that want a SAML sign-in before their pull requests show up (Arc: needsSSO).
@@ -135,6 +137,7 @@ public struct LiveFolderData: Codable, Equatable {
         filter = try c.decodeIfPresent(GitHubLiveFilter.self, forKey: .filter) ?? GitHubLiveFilter()
         hiddenItems = try c.decodeIfPresent([String].self, forKey: .hiddenItems) ?? []
         lastFetch = try c.decodeIfPresent(Date.self, forKey: .lastFetch)
+        refreshInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval)
         lastError = try? c.decodeIfPresent(LiveFolderError.self, forKey: .lastError)
         ssoOrganizations = try c.decodeIfPresent([String].self, forKey: .ssoOrganizations) ?? []
         enterprise = try c.decodeIfPresent(String.self, forKey: .enterprise)
@@ -185,6 +188,29 @@ extension LiveFolderData {
             return .singleSignOn(help: warning, url: snapshot.actions.first?.url)
         }
         return nil
+    }
+
+    public func effectiveRefreshInterval(default defaultInterval: TimeInterval) -> TimeInterval {
+        guard let refreshInterval, refreshInterval.isFinite, refreshInterval > 0 else { return defaultInterval }
+        return refreshInterval
+    }
+
+    public func isRefreshDue(now: Date, defaultInterval: TimeInterval, retryInterval: TimeInterval) -> Bool {
+        let last = lastFetch ?? .distantPast
+        let interval = effectiveRefreshInterval(default: defaultInterval)
+        let failing = lastError != nil || lastError == .notSignedIn || plugin?.snapshot?.warning != nil
+        return now.timeIntervalSince(last) >= (failing ? min(interval, retryInterval) : interval)
+    }
+}
+
+public enum LiveFolderRefreshInterval {
+    public static func title(for seconds: TimeInterval) -> String {
+        let totalMinutes = max(1, Int((seconds / 60).rounded()))
+        if totalMinutes < 60 {
+            return totalMinutes == 1 ? "1 minute" : "\(totalMinutes) minutes"
+        }
+        let hours = totalMinutes / 60
+        return hours == 1 ? "1 hour" : "\(hours) hours"
     }
 }
 

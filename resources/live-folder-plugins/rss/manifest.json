@@ -1,0 +1,14 @@
+{
+  "id": "cra.rss",
+  "name": "RSS Feed",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.js",
+  "sessionSetting": "feed",
+  "command": {
+    "title": "New RSS Live Folder",
+    "description": "Subscribe to an RSS or Atom feed as a live folder in your sidebar.",
+    "triggers": ["live folder", "rss", "atom", "feed"]
+  },
+  "sessionOrigins": []
+}

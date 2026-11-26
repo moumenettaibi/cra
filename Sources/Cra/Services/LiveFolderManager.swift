@@ -118,9 +118,11 @@ final class LiveFolderManager {
     func refreshStale(olderThan age: TimeInterval = refreshInterval) {
         guard NSApp.isActive, LiveFolderPluginStore.shared.loaded, let store else { return }
         for folder in store.liveFolders {
-            let last = folder.liveFolder?.lastFetch ?? .distantPast
-            let failing = folder.liveFolder.map { $0.lastError != nil || Self.needsSignIn($0) } ?? false
-            if store.clock.now.timeIntervalSince(last) >= (failing ? min(age, Self.retryInterval) : age) { refresh(folder.id) }
+            guard let live = folder.liveFolder else { continue }
+            let defaultInterval = live.plugin.flatMap { LiveFolderPluginStore.shared.entries[$0.id]?.presentation.defaultRefreshInterval } ?? age
+            if live.isRefreshDue(now: store.clock.now, defaultInterval: defaultInterval, retryInterval: Self.retryInterval) {
+                refresh(folder.id)
+            }
         }
     }
 
@@ -247,6 +249,28 @@ final class LiveFolderManager {
                 repositories[id] = store.liveRepositories(id, fetched: snapshot.items.compactMap(\.group))
                 diagnostics[id] = nil
                 store.applyPluginResults(snapshot, to: id, context: context)
+                if let state = snapshot.state, state != configuration.state {
+                    var updated = configuration
+                    updated.state = state
+                    if let updatedContext = store.liveRequestContext(id) {
+                        try? await updateSignIn(&updated, entry: entry)
+                        if store.liveRequestContext(id) == updatedContext {
+                            store.updateLiveFolder(id) {
+                                $0.plugin?.signIn = updated.signIn
+                                $0.plugin?.signInWarning = updated.signInWarning
+                                $0.plugin?.emptyText = updated.emptyText
+                                $0.plugin?.failureText = updated.failureText
+                                $0.plugin?.failureURL = updated.failureURL
+                                $0.plugin?.instanceLabel = updated.instanceLabel
+                                $0.plugin?.detailLabel = updated.detailLabel
+                            }
+                        }
+                    }
+                }
+                if let title = snapshot.folderTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !title.isEmpty, store.item(id)?.title == entry.presentation.folderTitle {
+                    store.rename(id, to: title)
+                }
             } catch {
                 guard acceptsResponse(id, context: context) else { return }
                 note(error, folder: id)

@@ -204,13 +204,14 @@ final class LiveFolderPluginStore {
                     pending.resolve(LiveFolderPluginResponse(status: 0, url: target, body: ""))
                     return
                 }
-                CraCEFRuntime.fetchPluginURL(target, headers: request.headers, profilePath: profile) { status, finalURL, _, body in
-                    pending.resolve(LiveFolderPluginResponse(status: Int(status), url: finalURL, body: body))
+                CraCEFRuntime.fetchPluginURL(target, headers: request.headers, profilePath: profile) { status, finalURL, mimeType, body in
+                    let headers = mimeType.isEmpty ? nil : ["content-type": mimeType]
+                    pending.resolve(LiveFolderPluginResponse(status: Int(status), url: finalURL, body: body, headers: headers))
                 }
             }
             let response = try pending.wait()
             if debug { dump(target, response, pluginID: pluginID) }
-            if (300..<400).contains(response.status) {
+            if (300..<400).contains(response.status), response.status != 304 {
                 address = response.url
                 continue
             }
